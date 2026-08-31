@@ -18,8 +18,12 @@ const JWT_SECRET = process.env.JWT_SECRET || "taskflow_secret_key_2026";
 // DATABASE CONNECTION & INITIALIZATION
 // ===============================
 
+const dbPath = process.env.NODE_ENV === 'production' 
+  ? path.join('/tmp', 'taskflow.db') 
+  : path.join(__dirname, "taskflow.db");
+
 const db = new sqlite3.Database(
-  path.join(__dirname, "taskflow.db"),
+  dbPath,
   (err) => {
     if (err) {
       console.error("❌ Database connection error:", err);
