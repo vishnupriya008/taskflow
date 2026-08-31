@@ -25,7 +25,7 @@ export default function JoinProject() {
     // Join the project
     const joinProject = async () => {
       try {
-        const response = await fetch("http://localhost:5000/api/projects/join", {
+        const response = await fetch("/api/projects/join", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

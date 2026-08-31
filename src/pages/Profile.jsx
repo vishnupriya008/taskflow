@@ -24,7 +24,7 @@ export default function Profile() {
   const fetchProfile = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:5000/api/me", {
+      const response = await fetch("/api/me", {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
       const data = await response.json();
@@ -48,7 +48,7 @@ export default function Profile() {
 
   const saveProfile = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/me", {
+      const response = await fetch("/api/me", {
         method: "PUT",
         headers: { 
           Authorization: `Bearer ${getToken()}`,
