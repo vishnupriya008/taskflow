@@ -569,7 +569,7 @@ app.get("/api/analytics", authenticateToken, async (req, res) => {
       ? Math.round((completed_tasks / total_tasks) * 100)
       : 0;
 
-    res.json({ total_projects, total_tasks, completed_tasks, open_tasks, velocity: \`${velocity}%\` });
+    res.json({ total_projects, total_tasks, completed_tasks, open_tasks, velocity: `${velocity}%` });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
