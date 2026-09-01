@@ -126,8 +126,18 @@ async function initializeDB() {
   }
 }
 
-initializeDB();
-
+let dbInitPromise = null;
+app.use(async (req, res, next) => {
+  if (!dbInitPromise) {
+    dbInitPromise = initializeDB();
+  }
+  try {
+    await dbInitPromise;
+  } catch (err) {
+    console.error("DB Init error in middleware:", err);
+  }
+  next();
+});
 // ===============================
 // AUTH MIDDLEWARE
 // ===============================
