@@ -29,7 +29,7 @@ pool.connect((err, client, release) => {
   if (err) {
     console.error("❌ Database connection error:", err.stack);
   } else {
-    console.log("📦 Connected to PostgreSQL Database");
+    console.log("📦 Successfully connected to PostgreSQL Database");
     release();
   }
 });
