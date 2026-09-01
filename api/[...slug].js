@@ -22,7 +22,7 @@ const connectionString = process.env.DATABASE_URL;
 
 const pool = new Pool({
   connectionString,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: connectionString && connectionString.includes('supabase') ? { rejectUnauthorized: false } : (process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false)
 });
 
 pool.connect((err, client, release) => {
@@ -180,6 +180,7 @@ app.post(["/api/register", "/api/auth/register"], async (req, res) => {
       user
     });
   } catch (error) {
+    console.error("Registration error:", error);
     if (error.code === '23505') { // Postgres unique violation error code
       return res.status(400).json({ error: "Email is already registered." });
     }
