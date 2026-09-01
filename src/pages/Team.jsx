@@ -100,7 +100,7 @@ export default function Team() {
 
   const handleWhatsAppShare = () => {
     if (!invitedMember) return;
-    const inviteLink = `http://localhost:5173/join?email=${encodeURIComponent(invitedMember.email)}`;
+    const inviteLink = `${window.location.origin}/join?email=${encodeURIComponent(invitedMember.email)}`;
     const text = `Hi ${invitedMember.name}, you've been invited to join our workspace on TaskFlow as a ${invitedMember.role}! Click here to join: ${inviteLink}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
@@ -253,7 +253,7 @@ export default function Team() {
                     Share this link with {invitedMember.name}: 
                     <br />
                     <code style={{ background: "#e0f2f1", padding: "4px 8px", borderRadius: "4px", display: "inline-block", marginTop: "8px" }}>
-                      http://localhost:5173/join?email={invitedMember.email}
+                      {window.location.origin}/join?email={invitedMember.email}
                     </code>
                   </p>
                 </div>

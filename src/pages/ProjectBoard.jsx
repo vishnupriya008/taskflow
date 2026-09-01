@@ -329,7 +329,7 @@ export default function ProjectBoard() {
           {project && project.invite_token && (
             <button
               onClick={() => {
-                const inviteUrl = `http://localhost:5173/join?token=${project.invite_token}`;
+                const inviteUrl = `${window.location.origin}/join?token=${project.invite_token}`;
                 window.open(`https://wa.me/?text=${encodeURIComponent(`Join my project "${project.name}" on TaskFlow: ${inviteUrl}`)}`, "_blank");
               }}
               style={{ backgroundColor: "#25D366", color: "#ffffff", border: "none", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "bold", display: "flex", alignItems: "center", gap: "6px" }}
