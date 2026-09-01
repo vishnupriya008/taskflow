@@ -17,8 +17,8 @@ const JWT_SECRET = process.env.JWT_SECRET || "taskflow_secret_key_2026";
 // DATABASE CONNECTION & INITIALIZATION
 // ===============================
 
-// Use process.env.DATABASE_URL. Fallback for local testing if needed, though real PG is required.
-const connectionString = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/taskflow";
+// Use process.env.DATABASE_URL. Real PG is required for production.
+const connectionString = process.env.DATABASE_URL;
 
 const pool = new Pool({
   connectionString,
@@ -38,7 +38,7 @@ pool.connect((err, client, release) => {
 async function initializeDB() {
   try {
     // Users Table
-    await pool.query(
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -51,10 +51,10 @@ async function initializeDB() {
         avatar TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    );
+    `);
 
     // Projects Table
-    await pool.query(
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS projects (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -64,10 +64,10 @@ async function initializeDB() {
         invite_token TEXT UNIQUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    );
+    `);
 
     // Project Members Table
-    await pool.query(
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS project_members (
         id SERIAL PRIMARY KEY,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -75,10 +75,10 @@ async function initializeDB() {
         joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(project_id, user_id)
       )
-    );
+    `);
 
     // Tasks Table
-    await pool.query(
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,
         project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
@@ -91,10 +91,10 @@ async function initializeDB() {
         assigned_to TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    );
+    `);
 
     // Comments Table
-    await pool.query(
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS comments (
         id SERIAL PRIMARY KEY,
         task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -103,10 +103,10 @@ async function initializeDB() {
         content TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    );
+    `);
 
     // Team Members Table
-    await pool.query(
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS team_members (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -118,7 +118,7 @@ async function initializeDB() {
         status TEXT DEFAULT 'Active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    );
+    `);
     
     console.log("✅ PostgreSQL tables initialized successfully.");
   } catch (err) {
@@ -164,7 +164,7 @@ app.post(["/api/register", "/api/auth/register"], async (req, res) => {
     const normalizedEmail = email.trim().toLowerCase();
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    const sql = \INSERT INTO users (name, email, password) VALUES (\, \, \) RETURNING id, name, email, role\;
+    const sql = `INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email, role`;
     const result = await pool.query(sql, [name, normalizedEmail, hashedPassword]);
     const user = result.rows[0];
 
@@ -197,7 +197,7 @@ app.post(["/api/login", "/api/auth/login"], async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    const result = await pool.query(\SELECT * FROM users WHERE email = \\, [normalizedEmail]);
+    const result = await pool.query(`SELECT * FROM users WHERE email = $1`, [normalizedEmail]);
     const user = result.rows[0];
 
     if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
@@ -234,7 +234,7 @@ app.post(["/api/login", "/api/auth/login"], async (req, res) => {
 app.get(["/api/me", "/api/profile"], authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      \SELECT id, name, email, role, bio, phone, location, avatar, created_at FROM users WHERE id = \\,
+      `SELECT id, name, email, role, bio, phone, location, avatar, created_at FROM users WHERE id = $1`,
       [req.user.id]
     );
     const user = result.rows[0];
@@ -248,17 +248,17 @@ app.get(["/api/me", "/api/profile"], authenticateToken, async (req, res) => {
 app.put(["/api/me", "/api/profile"], authenticateToken, async (req, res) => {
   try {
     const { name, bio, phone, location, role, avatar } = req.body;
-    const sql = \
+    const sql = `
       UPDATE users 
-      SET name = COALESCE(\, name),
-          bio = COALESCE(\, bio),
-          phone = COALESCE(\, phone),
-          location = COALESCE(\, location),
-          role = COALESCE(\, role),
-          avatar = COALESCE(\, avatar)
-      WHERE id = \
+      SET name = COALESCE($1, name),
+          bio = COALESCE($2, bio),
+          phone = COALESCE($3, phone),
+          location = COALESCE($4, location),
+          role = COALESCE($5, role),
+          avatar = COALESCE($6, avatar)
+      WHERE id = $7
       RETURNING id, name, email, role, bio, phone, location, avatar
-    \;
+    `;
 
     const result = await pool.query(sql, [name, bio, phone, location, role, avatar, req.user.id]);
     res.json(result.rows[0]);
@@ -274,14 +274,14 @@ app.put(["/api/me", "/api/profile"], authenticateToken, async (req, res) => {
 app.get("/api/projects", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      \SELECT p.*,
+      `SELECT p.*,
           (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as total_tasks,
           (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND LOWER(status) = 'completed') as completed_tasks
        FROM projects p
        LEFT JOIN project_members pm ON p.id = pm.project_id
-       WHERE p.user_id = \ OR pm.user_id = \
+       WHERE p.user_id = $1 OR pm.user_id = $2
        GROUP BY p.id
-       ORDER BY p.id DESC\,
+       ORDER BY p.id DESC`,
       [req.user.id, req.user.id]
     );
     
@@ -301,9 +301,9 @@ app.get("/api/projects", authenticateToken, async (req, res) => {
 app.get("/api/projects/:id", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      \SELECT p.* FROM projects p
+      `SELECT p.* FROM projects p
        LEFT JOIN project_members pm ON p.id = pm.project_id
-       WHERE p.id = \ AND (p.user_id = \ OR pm.user_id = \)\,
+       WHERE p.id = $1 AND (p.user_id = $2 OR pm.user_id = $3)`,
       [req.params.id, req.user.id, req.user.id]
     );
     const row = result.rows[0];
@@ -319,7 +319,7 @@ app.post("/api/projects/join", authenticateToken, async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ error: "Invite token is required." });
 
-    const result = await pool.query(\SELECT id, user_id FROM projects WHERE invite_token = \\, [token]);
+    const result = await pool.query(`SELECT id, user_id FROM projects WHERE invite_token = $1`, [token]);
     const project = result.rows[0];
     
     if (!project) return res.status(404).json({ error: "Invalid invite link." });
@@ -329,7 +329,7 @@ app.post("/api/projects/join", authenticateToken, async (req, res) => {
 
     try {
       await pool.query(
-        \INSERT INTO project_members (project_id, user_id) VALUES (\, \)\,
+        `INSERT INTO project_members (project_id, user_id) VALUES ($1, $2)`,
         [project.id, req.user.id]
       );
       res.json({ success: true, message: "Successfully joined project.", project });
@@ -351,7 +351,7 @@ app.post("/api/projects", authenticateToken, async (req, res) => {
     if (!name) return res.status(400).json({ error: "Project name is required." });
 
     const inviteToken = crypto.randomUUID();
-    const sql = \INSERT INTO projects (user_id, name, description, status, invite_token) VALUES (\, \, \, 'active', \) RETURNING *\;
+    const sql = `INSERT INTO projects (user_id, name, description, status, invite_token) VALUES ($1, $2, $3, 'active', $4) RETURNING *`;
     
     const result = await pool.query(sql, [req.user.id, name, description || "", inviteToken]);
     res.status(201).json(result.rows[0]);
@@ -363,7 +363,7 @@ app.post("/api/projects", authenticateToken, async (req, res) => {
 app.delete("/api/projects/:id", authenticateToken, async (req, res) => {
   try {
     await pool.query(
-      \DELETE FROM projects WHERE id = \ AND user_id = \\,
+      `DELETE FROM projects WHERE id = $1 AND user_id = $2`,
       [req.params.id, req.user.id]
     );
     res.json({ success: true, message: "Project deleted." });
@@ -382,24 +382,24 @@ app.get("/api/tasks", authenticateToken, async (req, res) => {
     let sql, params;
     
     if (project_id) {
-      sql = \
+      sql = `
         SELECT t.* FROM tasks t
         JOIN projects p ON t.project_id = p.id
         LEFT JOIN project_members pm ON p.id = pm.project_id
-        WHERE t.project_id = \ AND (p.user_id = \ OR pm.user_id = \)
+        WHERE t.project_id = $1 AND (p.user_id = $2 OR pm.user_id = $3)
         GROUP BY t.id
         ORDER BY t.id DESC
-      \;
+      `;
       params = [project_id, req.user.id, req.user.id];
     } else {
-      sql = \
+      sql = `
         SELECT t.* FROM tasks t
         LEFT JOIN projects p ON t.project_id = p.id
         LEFT JOIN project_members pm ON p.id = pm.project_id
-        WHERE t.user_id = \ OR p.user_id = \ OR pm.user_id = \
+        WHERE t.user_id = $1 OR p.user_id = $2 OR pm.user_id = $3
         GROUP BY t.id
         ORDER BY t.id DESC
-      \;
+      `;
       params = [req.user.id, req.user.id, req.user.id];
     }
     
@@ -417,17 +417,17 @@ app.post("/api/tasks", authenticateToken, async (req, res) => {
 
     if (project_id) {
       const accessCheck = await pool.query(
-        \SELECT p.id FROM projects p LEFT JOIN project_members pm ON p.id = pm.project_id WHERE p.id = \ AND (p.user_id = \ OR pm.user_id = \)\,
+        `SELECT p.id FROM projects p LEFT JOIN project_members pm ON p.id = pm.project_id WHERE p.id = $1 AND (p.user_id = $2 OR pm.user_id = $3)`,
         [project_id, req.user.id, req.user.id]
       );
       if (!accessCheck.rows[0]) return res.status(403).json({ error: "Access denied to add tasks to this project." });
     }
 
-    const sql = \
+    const sql = `
       INSERT INTO tasks (project_id, user_id, title, description, status, priority, due_date, assigned_to, created_at)
-      VALUES (\, \, \, \, \, \, \, \, COALESCE(\, CURRENT_TIMESTAMP))
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, CURRENT_TIMESTAMP))
       RETURNING *
-    \;
+    `;
     const result = await pool.query(sql, [
       project_id || null, req.user.id, title, description || "", status || "todo", priority || "medium", due_date || "", assigned_to || "", created_at || null
     ]);
@@ -441,17 +441,17 @@ app.post("/api/tasks", authenticateToken, async (req, res) => {
 app.put("/api/tasks/:id", authenticateToken, async (req, res) => {
   try {
     const { title, description, status, priority, due_date, assigned_to } = req.body;
-    const sql = \
+    const sql = `
       UPDATE tasks 
-      SET title = COALESCE(\, title),
-          description = COALESCE(\, description),
-          status = COALESCE(\, status),
-          priority = COALESCE(\, priority),
-          due_date = COALESCE(\, due_date),
-          assigned_to = COALESCE(\, assigned_to)
-      WHERE id = \ AND user_id = \
+      SET title = COALESCE($1, title),
+          description = COALESCE($2, description),
+          status = COALESCE($3, status),
+          priority = COALESCE($4, priority),
+          due_date = COALESCE($5, due_date),
+          assigned_to = COALESCE($6, assigned_to)
+      WHERE id = $7 AND user_id = $8
       RETURNING *
-    \;
+    `;
 
     const result = await pool.query(sql, [title, description, status, priority, due_date, assigned_to, req.params.id, req.user.id]);
     res.json(result.rows[0]);
@@ -463,7 +463,7 @@ app.put("/api/tasks/:id", authenticateToken, async (req, res) => {
 app.delete("/api/tasks/:id", authenticateToken, async (req, res) => {
   try {
     await pool.query(
-      \DELETE FROM tasks WHERE id = \ AND user_id = \\,
+      `DELETE FROM tasks WHERE id = $1 AND user_id = $2`,
       [req.params.id, req.user.id]
     );
     res.json({ success: true, message: "Task deleted." });
@@ -478,7 +478,7 @@ app.delete("/api/tasks/:id", authenticateToken, async (req, res) => {
 
 app.get("/api/tasks/:id/comments", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(\SELECT * FROM comments WHERE task_id = \ ORDER BY id ASC\, [req.params.id]);
+    const result = await pool.query(`SELECT * FROM comments WHERE task_id = $1 ORDER BY id ASC`, [req.params.id]);
     res.json(result.rows || []);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -490,7 +490,7 @@ app.post("/api/tasks/:id/comments", authenticateToken, async (req, res) => {
     const { content, created_at } = req.body;
     if (!content) return res.status(400).json({ error: "Comment content is required." });
 
-    const sql = \INSERT INTO comments (task_id, user_id, user_name, content, created_at) VALUES (\, \, \, \, COALESCE(\, CURRENT_TIMESTAMP)) RETURNING *\;
+    const sql = `INSERT INTO comments (task_id, user_id, user_name, content, created_at) VALUES ($1, $2, $3, $4, COALESCE($5, CURRENT_TIMESTAMP)) RETURNING *`;
     const result = await pool.query(sql, [req.params.id, req.user.id, req.user.name || "User", content, created_at || null]);
     
     res.status(201).json(result.rows[0]);
@@ -506,7 +506,7 @@ app.post("/api/tasks/:id/comments", authenticateToken, async (req, res) => {
 app.get("/api/team", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      \SELECT id, name, email, phone, role, department, status FROM team_members WHERE user_id = \\,
+      `SELECT id, name, email, phone, role, department, status FROM team_members WHERE user_id = $1`,
       [req.user.id]
     );
     res.json(result.rows || []);
@@ -520,11 +520,11 @@ app.post("/api/team", authenticateToken, async (req, res) => {
     const { name, email, phone, role, department } = req.body;
     if (!name || !email) return res.status(400).json({ error: "Name and email are required." });
 
-    const sql = \
+    const sql = `
       INSERT INTO team_members (user_id, name, email, phone, role, department, status)
-      VALUES (\, \, \, \, \, \, 'Active')
+      VALUES ($1, $2, $3, $4, $5, $6, 'Active')
       RETURNING *
-    \;
+    `;
     const result = await pool.query(sql, [req.user.id, name, email, phone || "", role || "Member", department || "Engineering"]);
     
     res.status(201).json(result.rows[0]);
@@ -536,7 +536,7 @@ app.post("/api/team", authenticateToken, async (req, res) => {
 app.delete("/api/team/:id", authenticateToken, async (req, res) => {
   try {
     await pool.query(
-      \DELETE FROM team_members WHERE id = \ AND user_id = \\,
+      `DELETE FROM team_members WHERE id = $1 AND user_id = $2`,
       [req.params.id, req.user.id]
     );
     res.json({ success: true, message: "Member deleted." });
@@ -550,12 +550,12 @@ app.get("/api/analytics", authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     const result = await pool.query(
-      \SELECT 
-        (SELECT COUNT(*) FROM projects WHERE user_id = \) as total_projects,
-        (SELECT COUNT(*) FROM tasks WHERE user_id = \) as total_tasks,
-        (SELECT COUNT(*) FROM tasks WHERE user_id = \ AND status = 'completed') as completed_tasks,
-        (SELECT COUNT(*) FROM tasks WHERE user_id = \ AND status != 'completed') as open_tasks
-      \,
+      `SELECT 
+        (SELECT COUNT(*) FROM projects WHERE user_id = $1) as total_projects,
+        (SELECT COUNT(*) FROM tasks WHERE user_id = $2) as total_tasks,
+        (SELECT COUNT(*) FROM tasks WHERE user_id = $3 AND status = 'completed') as completed_tasks,
+        (SELECT COUNT(*) FROM tasks WHERE user_id = $4 AND status != 'completed') as open_tasks
+      `,
       [userId, userId, userId, userId]
     );
     
@@ -569,7 +569,7 @@ app.get("/api/analytics", authenticateToken, async (req, res) => {
       ? Math.round((completed_tasks / total_tasks) * 100)
       : 0;
 
-    res.json({ total_projects, total_tasks, completed_tasks, open_tasks, velocity: \\%\ });
+    res.json({ total_projects, total_tasks, completed_tasks, open_tasks, velocity: \`${velocity}%\` });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -581,7 +581,7 @@ app.get("/api/analytics", authenticateToken, async (req, res) => {
 
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
-    console.log(\🚀 Server running on http://localhost:\\);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
 }
 
