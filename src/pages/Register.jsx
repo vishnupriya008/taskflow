@@ -60,7 +60,7 @@ export default function Register() {
       localStorage.setItem("taskflow_user", JSON.stringify(data.user));
 
       alert("Registration successful!");
-      
+
       const pendingInviteToken = localStorage.getItem("pending_invite_token");
       if (pendingInviteToken) {
         localStorage.removeItem("pending_invite_token");
