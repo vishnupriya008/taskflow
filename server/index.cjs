@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
@@ -10,100 +10,107 @@ const app = express();
 app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 app.use(express.json());
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "taskflow_secret_key_2026";
 
 // ===============================
 // DATABASE CONNECTION & INITIALIZATION
 // ===============================
 
-const db = new sqlite3.Database(
-  path.join(__dirname, "taskflow.db"),
-  (err) => {
-    if (err) {
-      console.error("❌ Database connection error:", err);
-    } else {
-      console.log("📦 Connected to SQLite Database");
-    }
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
   }
-);
-
-db.serialize(() => {
-  // Users Table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT DEFAULT 'Member',
-      bio TEXT,
-      phone TEXT,
-      location TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Projects Table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT,
-      status TEXT DEFAULT 'active',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Tasks Table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER,
-      user_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      status TEXT DEFAULT 'todo',
-      priority TEXT DEFAULT 'medium',
-      due_date TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Comments Table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS comments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      user_id INTEGER NOT NULL,
-      user_name TEXT,
-      content TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Team Members Table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS team_members (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL,
-      phone TEXT,
-      role TEXT DEFAULT 'Member',
-      department TEXT DEFAULT 'Engineering',
-      status TEXT DEFAULT 'Active',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
 });
+
+pool.connect((err, client, release) => {
+  if (err) {
+    console.error("❌ Database connection error:", err);
+  } else {
+    console.log("📦 Connected to PostgreSQL Database");
+    release();
+  }
+});
+
+const initDB = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'Member',
+        bio TEXT,
+        phone TEXT,
+        location TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'todo',
+        priority TEXT DEFAULT 'medium',
+        due_date TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS comments (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        user_name TEXT,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS team_members (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        phone TEXT,
+        role TEXT DEFAULT 'Member',
+        department TEXT DEFAULT 'Engineering',
+        status TEXT DEFAULT 'Active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+    console.log("✅ PostgreSQL tables initialized");
+  } catch (error) {
+    console.error("❌ Error initializing tables:", error);
+  }
+};
+
+initDB();
 
 // ===============================
 // AUTH MIDDLEWARE
@@ -139,18 +146,20 @@ app.post(["/api/register", "/api/auth/register"], async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const sql = `INSERT INTO users (name, email, password) VALUES (?, ?, ?)`;
+    const sql = `INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email, role`;
 
-    db.run(sql, [name, email, hashedPassword], function (err) {
+    pool.query(sql, [name, email, hashedPassword], (err, result) => {
       if (err) {
-        if (err.message.includes("UNIQUE")) {
+        if (err.code === "23505") { // PostgreSQL unique violation code
           return res.status(400).json({ error: "Email is already registered." });
         }
+        console.error(err);
         return res.status(500).json({ error: "Database error." });
       }
 
+      const user = result.rows[0];
       const token = jwt.sign(
-        { id: this.lastID, email, name },
+        { id: user.id, email: user.email, name: user.name },
         JWT_SECRET,
         { expiresIn: "7d" }
       );
@@ -158,10 +167,11 @@ app.post(["/api/register", "/api/auth/register"], async (req, res) => {
       res.status(201).json({
         success: true,
         token,
-        user: { id: this.lastID, name, email, role: "Member" }
+        user
       });
     });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ success: false, error: "Server error." });
   }
 });
@@ -173,8 +183,10 @@ app.post(["/api/login", "/api/auth/login"], (req, res) => {
     return res.status(400).json({ success: false, error: "Email and password are required." });
   }
 
-  db.get(`SELECT * FROM users WHERE email = ?`, [email], async (err, user) => {
+  pool.query(`SELECT * FROM users WHERE email = $1`, [email], async (err, result) => {
     if (err) return res.status(500).json({ success: false, error: "Database error." });
+    
+    const user = result.rows[0];
     if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
 
     const passwordMatch = await bcrypt.compare(password, user.password);
@@ -205,11 +217,12 @@ app.post(["/api/login", "/api/auth/login"], (req, res) => {
 });
 
 app.get(["/api/me", "/api/profile"], authenticateToken, (req, res) => {
-  db.get(
-    `SELECT id, name, email, role, bio, phone, location, created_at FROM users WHERE id = ?`,
+  pool.query(
+    `SELECT id, name, email, role, bio, phone, location, created_at FROM users WHERE id = $1`,
     [req.user.id],
-    (err, user) => {
+    (err, result) => {
       if (err) return res.status(500).json({ error: "Database error." });
+      const user = result.rows[0];
       if (!user) return res.status(404).json({ error: "User not found." });
       res.json(user);
     }
@@ -220,21 +233,18 @@ app.put(["/api/me", "/api/profile"], authenticateToken, (req, res) => {
   const { name, bio, phone, location, role } = req.body;
   const sql = `
     UPDATE users 
-    SET name = COALESCE(?, name),
-        bio = COALESCE(?, bio),
-        phone = COALESCE(?, phone),
-        location = COALESCE(?, location),
-        role = COALESCE(?, role)
-    WHERE id = ?
+    SET name = COALESCE($1, name),
+        bio = COALESCE($2, bio),
+        phone = COALESCE($3, phone),
+        location = COALESCE($4, location),
+        role = COALESCE($5, role)
+    WHERE id = $6
+    RETURNING id, name, email, role, bio, phone, location
   `;
 
-  db.run(sql, [name, bio, phone, location, role, req.user.id], function (err) {
+  pool.query(sql, [name, bio, phone, location, role, req.user.id], (err, result) => {
     if (err) return res.status(500).json({ error: "Failed to update profile." });
-    db.get(
-      `SELECT id, name, email, role, bio, phone, location FROM users WHERE id = ?`,
-      [req.user.id],
-      (err, updatedUser) => res.json(updatedUser)
-    );
+    res.json(result.rows[0]);
   });
 });
 
@@ -243,12 +253,12 @@ app.put(["/api/me", "/api/profile"], authenticateToken, (req, res) => {
 // ===============================
 
 app.get("/api/projects", authenticateToken, (req, res) => {
-  db.all(
-    `SELECT * FROM projects WHERE user_id = ? ORDER BY id DESC`,
+  pool.query(
+    `SELECT * FROM projects WHERE user_id = $1 ORDER BY id DESC`,
     [req.user.id],
-    (err, rows) => {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
+      res.json(result.rows || []);
     }
   );
 });
@@ -257,24 +267,18 @@ app.post("/api/projects", authenticateToken, (req, res) => {
   const { name, description } = req.body;
   if (!name) return res.status(400).json({ error: "Project name is required." });
 
-  const sql = `INSERT INTO projects (user_id, name, description, status) VALUES (?, ?, ?, 'active')`;
-  db.run(sql, [req.user.id, name, description || ""], function (err) {
+  const sql = `INSERT INTO projects (user_id, name, description, status) VALUES ($1, $2, $3, 'active') RETURNING *`;
+  pool.query(sql, [req.user.id, name, description || ""], (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.status(201).json({
-      id: this.lastID,
-      user_id: req.user.id,
-      name,
-      description: description || "",
-      status: "active"
-    });
+    res.status(201).json(result.rows[0]);
   });
 });
 
 app.delete("/api/projects/:id", authenticateToken, (req, res) => {
-  db.run(
-    `DELETE FROM projects WHERE id = ? AND user_id = ?`,
+  pool.query(
+    `DELETE FROM projects WHERE id = $1 AND user_id = $2`,
     [req.params.id, req.user.id],
-    function (err) {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true, message: "Project deleted." });
     }
@@ -287,18 +291,18 @@ app.delete("/api/projects/:id", authenticateToken, (req, res) => {
 
 app.get("/api/tasks", authenticateToken, (req, res) => {
   const { project_id } = req.query;
-  let sql = `SELECT * FROM tasks WHERE user_id = ?`;
+  let sql = `SELECT * FROM tasks WHERE user_id = $1`;
   const params = [req.user.id];
 
   if (project_id) {
-    sql += ` AND project_id = ?`;
+    sql += ` AND project_id = $2`;
     params.push(project_id);
   }
   sql += ` ORDER BY id DESC`;
 
-  db.all(sql, params, (err, rows) => {
+  pool.query(sql, params, (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows || []);
+    res.json(result.rows || []);
   });
 });
 
@@ -308,9 +312,10 @@ app.post("/api/tasks", authenticateToken, (req, res) => {
 
   const sql = `
     INSERT INTO tasks (project_id, user_id, title, description, status, priority, due_date, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now', 'localtime')))
+    VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
+    RETURNING *
   `;
-  db.run(
+  pool.query(
     sql,
     [
       project_id || null,
@@ -322,19 +327,12 @@ app.post("/api/tasks", authenticateToken, (req, res) => {
       due_date || "",
       created_at || null
     ],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({
-        id: this.lastID,
-        project_id,
-        user_id: req.user.id,
-        title,
-        description,
-        status: status || "todo",
-        priority: priority || "medium",
-        due_date,
-        created_at: created_at || new Date().toLocaleString()
-      });
+    (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: err.message });
+      }
+      res.status(201).json(result.rows[0]);
     }
   );
 });
@@ -343,31 +341,30 @@ app.put("/api/tasks/:id", authenticateToken, (req, res) => {
   const { title, description, status, priority, due_date } = req.body;
   const sql = `
     UPDATE tasks 
-    SET title = COALESCE(?, title),
-        description = COALESCE(?, description),
-        status = COALESCE(?, status),
-        priority = COALESCE(?, priority),
-        due_date = COALESCE(?, due_date)
-    WHERE id = ? AND user_id = ?
+    SET title = COALESCE($1, title),
+        description = COALESCE($2, description),
+        status = COALESCE($3, status),
+        priority = COALESCE($4, priority),
+        due_date = COALESCE($5, due_date)
+    WHERE id = $6 AND user_id = $7
+    RETURNING *
   `;
 
-  db.run(
+  pool.query(
     sql,
     [title, description, status, priority, due_date, req.params.id, req.user.id],
-    function (err) {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      db.get(`SELECT * FROM tasks WHERE id = ?`, [req.params.id], (err, row) => {
-        res.json(row);
-      });
+      res.json(result.rows[0]);
     }
   );
 });
 
 app.delete("/api/tasks/:id", authenticateToken, (req, res) => {
-  db.run(
-    `DELETE FROM tasks WHERE id = ? AND user_id = ?`,
+  pool.query(
+    `DELETE FROM tasks WHERE id = $1 AND user_id = $2`,
     [req.params.id, req.user.id],
-    function (err) {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ success: true, message: "Task deleted." });
     }
@@ -379,12 +376,12 @@ app.delete("/api/tasks/:id", authenticateToken, (req, res) => {
 // ===============================
 
 app.get("/api/tasks/:id/comments", authenticateToken, (req, res) => {
-  db.all(
-    `SELECT * FROM comments WHERE task_id = ? ORDER BY id ASC`,
+  pool.query(
+    `SELECT * FROM comments WHERE task_id = $1 ORDER BY id ASC`,
     [req.params.id],
-    (err, rows) => {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
+      res.json(result.rows || []);
     }
   );
 });
@@ -393,15 +390,10 @@ app.post("/api/tasks/:id/comments", authenticateToken, (req, res) => {
   const { content, created_at } = req.body;
   if (!content) return res.status(400).json({ error: "Comment content is required." });
 
-  const sql = `INSERT INTO comments (task_id, user_id, user_name, content, created_at) VALUES (?, ?, ?, ?, COALESCE(?, datetime('now', 'localtime')))`;
-  db.run(sql, [req.params.id, req.user.id, req.user.name || "User", content, created_at || null], function (err) {
+  const sql = `INSERT INTO comments (task_id, user_id, user_name, content, created_at) VALUES ($1, $2, $3, $4, COALESCE($5, NOW())) RETURNING *`;
+  pool.query(sql, [req.params.id, req.user.id, req.user.name || "User", content, created_at || null], (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
-    
-    // Fetch the newly inserted comment to return the correct local timestamp
-    db.get(`SELECT * FROM comments WHERE id = ?`, [this.lastID], (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json(row);
-    });
+    res.status(201).json(result.rows[0]);
   });
 });
 
@@ -410,12 +402,12 @@ app.post("/api/tasks/:id/comments", authenticateToken, (req, res) => {
 // ===============================
 
 app.get("/api/team", authenticateToken, (req, res) => {
-  db.all(
-    `SELECT id, name, email, phone, role, department, status FROM team_members WHERE user_id = ?`,
+  pool.query(
+    `SELECT id, name, email, phone, role, department, status FROM team_members WHERE user_id = $1`,
     [req.user.id],
-    (err, rows) => {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
+      res.json(result.rows || []);
     }
   );
 });
@@ -426,22 +418,15 @@ app.post("/api/team", authenticateToken, (req, res) => {
 
   const sql = `
     INSERT INTO team_members (user_id, name, email, phone, role, department, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'Active')
+    VALUES ($1, $2, $3, $4, $5, $6, 'Active')
+    RETURNING *
   `;
-  db.run(
+  pool.query(
     sql,
     [req.user.id, name, email, phone || "", role || "Member", department || "Engineering"],
-    function (err) {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({
-        id: this.lastID,
-        name,
-        email,
-        phone,
-        role: role || "Member",
-        department: department || "Engineering",
-        status: "Active"
-      });
+      res.status(201).json(result.rows[0]);
     }
   );
 });
@@ -449,21 +434,34 @@ app.post("/api/team", authenticateToken, (req, res) => {
 app.get("/api/analytics", authenticateToken, (req, res) => {
   const userId = req.user.id;
 
-  db.get(
+  pool.query(
     `SELECT 
-      (SELECT COUNT(*) FROM projects WHERE user_id = ?) as total_projects,
-      (SELECT COUNT(*) FROM tasks WHERE user_id = ?) as total_tasks,
-      (SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'completed') as completed_tasks,
-      (SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status != 'completed') as open_tasks
+      (SELECT COUNT(*) FROM projects WHERE user_id = $1) as total_projects,
+      (SELECT COUNT(*) FROM tasks WHERE user_id = $2) as total_tasks,
+      (SELECT COUNT(*) FROM tasks WHERE user_id = $3 AND status = 'completed') as completed_tasks,
+      (SELECT COUNT(*) FROM tasks WHERE user_id = $4 AND status != 'completed') as open_tasks
     `,
     [userId, userId, userId, userId],
-    (err, stats) => {
+    (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
-      const velocity = stats.total_tasks > 0
-        ? Math.round((stats.completed_tasks / stats.total_tasks) * 100)
+      const stats = result.rows[0];
+      
+      const total_tasks = parseInt(stats.total_tasks, 10) || 0;
+      const completed_tasks = parseInt(stats.completed_tasks, 10) || 0;
+      const open_tasks = parseInt(stats.open_tasks, 10) || 0;
+      const total_projects = parseInt(stats.total_projects, 10) || 0;
+
+      const velocity = total_tasks > 0
+        ? Math.round((completed_tasks / total_tasks) * 100)
         : 0;
 
-      res.json({ ...stats, velocity: `${velocity}%` });
+      res.json({
+        total_projects,
+        total_tasks,
+        completed_tasks,
+        open_tasks,
+        velocity: `${velocity}%`
+      });
     }
   );
 });
