@@ -24,7 +24,8 @@ export default function Profile() {
   const fetchProfile = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/me", {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+      const response = await fetch(`${API_BASE_URL}/me`, {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
       const data = await response.json();
@@ -48,7 +49,8 @@ export default function Profile() {
 
   const saveProfile = async () => {
     try {
-      const response = await fetch("/api/me", {
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+      const response = await fetch(`${API_BASE_URL}/me`, {
         method: "PUT",
         headers: { 
           Authorization: `Bearer ${getToken()}`,
