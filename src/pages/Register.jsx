@@ -34,7 +34,7 @@ export default function Register() {
     setLoading(true);
 
     try {
-      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "https://taskflow-ni7n.onrender.com/api" : "http://localhost:5000/api");
       const response = await fetch(`${API_BASE_URL}/register`, {
         method: "POST",
         headers: {
