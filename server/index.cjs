@@ -7,7 +7,11 @@ const path = require("path");
 
 const app = express();
 
-const allowedOrigins = ["http://localhost:5173", "https://codealpha-pm-tool.vercel.app"];
+const allowedOrigins = [
+  "http://localhost:5173",
+  process.env.FRONTEND_URL || "https://codealpha-pm-tool.vercel.app"
+];
+
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
